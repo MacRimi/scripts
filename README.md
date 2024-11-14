@@ -1,5 +1,11 @@
 # Proxmox
 
+## - **Añadir aceleracion gráfica GPU y/o añadir Coral TPU ![Ícono de CPU](https://tu-repositorio.github.io/ruta-al-icono/cpu.svg):
+
+```
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/MacRimi/scripts/refs/heads/main/Igpu_and_coral.sh)"
+```
+
 ## - **Script quitar cartel suscripcion proxmox**
 
 ```
