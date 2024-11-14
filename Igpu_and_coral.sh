@@ -13,7 +13,7 @@ fi
 
 # Menú de selección de recursos
 echo "Selecciona los recursos a añadir al contenedor:"
-echo "1. Añadir aceleración gráfica iGPU (para HW de video como Plex o Jellyfin)"
+echo "1. Añadir aceleración gráfica iGPU"
 echo "2. Añadir Coral TPU (incluye iGPU si está disponible)"
 read -p "Introduce el número de la opción (1 o 2): " OPTION
 
