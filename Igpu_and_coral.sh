@@ -63,13 +63,12 @@ EOL
         else
             echo "La iGPU ya está configurada en el contenedor."
         fi
-    elif [[ "$OPTION" == "2" ]]; then
-        echo "Advertencia: Se seleccionó Coral TPU, pero no se detectó una iGPU en el sistema."
-        echo "Al usar Coral TPU sin iGPU, puede haber limitaciones de rendimiento en aplicaciones que requieren procesamiento gráfico intensivo, como Frigate."
-        read -p "¿Deseas continuar con la instalación de Coral TPU sin iGPU? (s/n): " CONFIRM
-        if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
+    else
+        # Si se seleccionó solo la iGPU (opción 1) y no está disponible, detener el script
+        if [[ "$OPTION" == "1" ]]; then
+            echo "Error: Se seleccionó iGPU, pero no se detectó una iGPU en el sistema."
             echo "Instalación cancelada."
-            exit 0
+            exit 1
         fi
     fi
 fi
