@@ -6,7 +6,8 @@
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/MacRimi/scripts/refs/heads/main/Igpu_and_coral.sh)"
 ```
 
-###
+#
+
 
 ## - **Script quitar cartel suscripcion proxmox**
 
