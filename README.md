@@ -1,6 +1,7 @@
 # Proxmox
 
-## - Añadir aceleracion gráfica GPU y/o añadir Coral TPU: 
+## - Añadir aceleracion gráfica GPU y/o añadir Coral TPU: <img src="https://raw.githubusercontent.com/lucide-icons/lucide/master/icons/cpu.svg" alt="Ícono de CPU" width="50" height="50">
+
 ```
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/MacRimi/scripts/refs/heads/main/Igpu_and_coral.sh)"
 ```
