@@ -1,6 +1,6 @@
 # Proxmox
 
-## - **Añadir aceleracion gráfica GPU y/o añadir Coral TPU: 
+## - Añadir aceleracion gráfica GPU y/o añadir Coral TPU: 
 ![Ícono de CPU](https://raw.githubusercontent.com/lucide-icons/lucide/master/icons/cpu.svg)
 
 ```
