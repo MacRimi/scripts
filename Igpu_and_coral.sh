@@ -32,7 +32,16 @@ CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
 if grep -q "^unprivileged: 1" "$CONFIG_FILE"; then
     echo "El contenedor es no privilegiado. Cambiando a privilegiado..."
     sed -i "s/^unprivileged: 1/unprivileged: 0/" "$CONFIG_FILE"
-    chown -R root:root "/rpool/data/subvol-${CONTAINER_ID}/"  # Cambia la ruta según tu configuración
+
+    # Detectar el tipo de almacenamiento y aplicar `chown` solo si es de tipo directorio
+    STORAGE_TYPE=$(pct config "$CONTAINER_ID" | grep "^rootfs:" | awk -F, '{print $2}' | cut -d'=' -f2)
+    if [[ "$STORAGE_TYPE" == "dir" ]]; then
+        STORAGE_PATH=$(pct config "$CONTAINER_ID" | grep "^rootfs:" | awk '{print $2}' | cut -d',' -f1)
+        echo "Aplicando permisos root en el almacenamiento de tipo directorio..."
+        chown -R root:root "$STORAGE_PATH"
+    else
+        echo "El contenedor usa almacenamiento de tipo LVM, no se requiere cambio de permisos."
+    fi
 else
     echo "El contenedor ya es privilegiado."
 fi
