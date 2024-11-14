@@ -14,7 +14,7 @@ fi
 # Menú de selección de recursos
 echo "Selecciona los recursos a añadir al contenedor:"
 echo "1. Añadir aceleración gráfica iGPU (para HW de video como Plex o Jellyfin)"
-echo "2. Añadir Coral TPU (incluye iGPU)"
+echo "2. Añadir Coral TPU (incluye iGPU si está disponible)"
 read -p "Introduce el número de la opción (1 o 2): " OPTION
 
 # Verificación de entrada válida
@@ -37,27 +37,46 @@ else
     echo "El contenedor ya es privilegiado."
 fi
 
+# Comprobar si la iGPU está disponible
+IGPU_AVAILABLE=false
+if ls /dev/dri/renderD128 &>/dev/null; then
+    IGPU_AVAILABLE=true
+    echo "iGPU detectada. Se añadirá la configuración de iGPU al contenedor."
+else
+    echo "No se detectó iGPU."
+fi
+
 # Añadir configuración de iGPU si se selecciona la opción 1 o 2
 if [[ "$OPTION" == "1" || "$OPTION" == "2" ]]; then
-    echo "Configurando iGPU para el contenedor..."
+    if $IGPU_AVAILABLE; then
+        echo "Configurando iGPU para el contenedor..."
 
-    # Configurar iGPU en el archivo de configuración del contenedor
-    if ! grep -q "cgroup2.devices.allow: c 226" "$CONFIG_FILE"; then
-        cat <<EOL >> "$CONFIG_FILE"
+        # Configurar iGPU en el archivo de configuración del contenedor
+        if ! grep -q "cgroup2.devices.allow: c 226" "$CONFIG_FILE"; then
+            cat <<EOL >> "$CONFIG_FILE"
 features: nesting=1
 lxc.cgroup2.devices.allow: c 226:0 rwm #igpu
 lxc.cgroup2.devices.allow: c 226:128 rwm #igpu
 lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file 0, 0 #igpu
 EOL
-        echo "iGPU añadida al contenedor $CONTAINER_ID."
-    else
-        echo "La iGPU ya está configurada en el contenedor."
+            echo "iGPU añadida al contenedor $CONTAINER_ID."
+        else
+            echo "La iGPU ya está configurada en el contenedor."
+        fi
+    elif [[ "$OPTION" == "2" ]]; then
+        echo "Advertencia: Se seleccionó Coral TPU, pero no se detectó una iGPU en el sistema."
+        echo "Al usar Coral TPU sin iGPU, puede haber limitaciones de rendimiento en aplicaciones que requieren procesamiento gráfico intensivo, como Frigate."
+        read -p "¿Deseas continuar con la instalación de Coral TPU sin iGPU? (s/n): " CONFIRM
+        if [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]]; then
+            echo "Instalación cancelada."
+            exit 0
+        fi
     fi
 fi
 
 # Añadir configuración de Coral TPU si se selecciona la opción 2
 if [[ "$OPTION" == "2" ]]; then
-    echo "Configurando Coral TPU para el contenedor (incluye iGPU)..."
+    echo "Configurando Coral TPU para el contenedor..."
 
     # Comprobar tipo de Coral TPU
     CORAL_USB_AVAILABLE=false
