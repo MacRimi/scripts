@@ -53,12 +53,16 @@ if [[ "$OPTION" == "1" || "$OPTION" == "2" ]]; then
 
         # Configurar iGPU en el archivo de configuración del contenedor
         if ! grep -q "cgroup2.devices.allow: c 226" "$CONFIG_FILE"; then
-            cat <<EOL >> "$CONFIG_FILE"
+ cat <<EOF >> "$CONFIG_FILE"
 features: nesting=1
 lxc.cgroup2.devices.allow: c 226:0 rwm #igpu
 lxc.cgroup2.devices.allow: c 226:128 rwm #igpu
-lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file 0, 0 #igpu
-EOL
+lxc.cgroup2.devices.allow: c 29:0 rwm
+lxc.mount.entry: /dev/fb0 dev/fb0 none bind,optional,create=file
+lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
+lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file
+EOF
+
             echo "iGPU añadida al contenedor $CONTAINER_ID."
         else
             echo "La iGPU ya está configurada en el contenedor."
