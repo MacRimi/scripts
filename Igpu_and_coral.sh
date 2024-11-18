@@ -128,6 +128,17 @@ fi
 
 # Instalar controladores de Coral TPU dentro del contenedor si se seleccionó la opción 2
 if [[ "$OPTION" == "2" ]]; then
+    echo "Verificando si el contenedor está encendido para instalar los drivers..."
+    
+    # Verificar si el contenedor está apagado y encenderlo si es necesario
+    if [[ "$(pct status "$CONTAINER_ID" | awk '{print $2}')" != "running" ]]; then
+        echo "El contenedor está apagado. Iniciándolo..."
+        pct start "$CONTAINER_ID"
+        
+        # Esperar unos segundos para asegurar que el contenedor esté listo
+        sleep 5
+    fi
+
     echo "Instalando controladores de Coral TPU en el contenedor LXC..."
 
     # Ejecutar comandos dentro del contenedor para añadir repositorio e instalar el driver
@@ -140,6 +151,8 @@ if [[ "$OPTION" == "2" ]]; then
     echo "Instalación de drivers de Coral TPU en el contenedor LXC completada."
 fi
 
-# Iniciar el contenedor LXC
-echo "Iniciando el contenedor LXC con la configuración actualizada."
-pct start "$CONTAINER_ID"
+# Iniciar el contenedor LXC si no está en ejecución
+if [[ "$(pct status "$CONTAINER_ID" | awk '{print $2}')" != "running" ]]; then
+    echo "Iniciando el contenedor LXC con la configuración actualizada."
+    pct start "$CONTAINER_ID"
+fi
