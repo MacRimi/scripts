@@ -143,6 +143,8 @@ if [[ "$OPTION" == "2" ]]; then
 
     # Ejecutar comandos dentro del contenedor para añadir repositorio e instalar el driver
     pct exec "$CONTAINER_ID" -- bash -c "
+    apt-get update
+    apt-get install -y gnupg
     echo 'deb https://packages.cloud.google.com/apt coral-edgetpu-stable main' | tee /etc/apt/sources.list.d/coral-edgetpu.list
     curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
     apt-get update
