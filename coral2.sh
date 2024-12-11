@@ -1,38 +1,119 @@
 #!/bin/bash
 
+YW=$(echo "\033[33m")
+BL=$(echo "\033[36m")
+RD=$(echo "\033[01;31m")
+GN=$(echo "\033[1;92m")
+CL=$(echo "\033[m")
+BFR="\r\033[K"
+CM="${GN}✓${CL}"
+HOLD="-"
+
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo -e "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
+msg_info() {
+    local msg="$1"
+    echo -ne " ${HOLD} ${YW}${msg}..."
+}
+
+msg_ok() {
+    local msg="$1"
+    echo -e "${BFR} ${CM} ${GN}${msg}${CL}"
+}
+
+msg_error() {
+    local msg="$1"
+    echo -e "${BFR} ${RD}✗ ${CL}${msg}"
 }
 
 NEED_REBOOT=false
 
+# Validar la versión de Proxmox
+validate_pve_version() {
+    if ! pveversion | grep -Eq "pve-manager/(8\.[1-3])"; then
+        msg_error "Esta versión de Proxmox no es compatible."
+        echo -e "Requiere Proxmox VE 8.1 o superior. Saliendo..."
+        exit 1
+    fi
+    msg_ok "Versión de Proxmox compatible."
+}
+
 # Verificar y configurar repositorios
 verify_and_add_repos() {
-    log "Verificando y configurando repositorios necesarios..."
-    # Repositorio Proxmox "No Subscription"
+    msg_info "Verificando y configurando repositorios necesarios"
     if ! grep -q "pve-no-subscription" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then
         echo "deb http://download.proxmox.com/debian/pve $(lsb_release -sc) pve-no-subscription" | tee /etc/apt/sources.list.d/pve-no-subscription.list
     fi
-    # Repositorios Debian con firmware no libre
     if ! grep -q "non-free-firmware" /etc/apt/sources.list; then
         echo "deb http://deb.debian.org/debian $(lsb_release -sc) main contrib non-free-firmware
 deb http://deb.debian.org/debian $(lsb_release -sc)-updates main contrib non-free-firmware
 deb http://security.debian.org/debian-security $(lsb_release -sc)-security main contrib non-free-firmware" | tee -a /etc/apt/sources.list
     fi
-    apt-get update && log "Repositorios configurados correctamente."
+    apt-get update &>/dev/null
+    msg_ok "Repositorios configurados correctamente."
 }
 
 # Verificar si se requieren repositorios adicionales y añadirlos
 add_coral_repos() {
-    log "Verificando repositorios de Coral TPU..."
+    msg_info "Verificando repositorios de Coral TPU"
     if ! grep -q "coral-edgetpu-stable" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then
         echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | tee /etc/apt/sources.list.d/coral-edgetpu.list
         curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg
-        apt-get update
-        log "Repositorio de Coral añadido correctamente."
+        apt-get update &>/dev/null
+        msg_ok "Repositorio de Coral añadido correctamente."
     else
-        log "Repositorio de Coral ya está configurado."
+        msg_ok "Repositorio de Coral ya configurado."
     fi
+}
+
+# Instalar dependencias para Coral TPU
+install_coral_dependencies() {
+    msg_info "Instalando dependencias para Coral TPU"
+    apt remove -y gasket-dkms &>/dev/null
+    apt install -y git devscripts dh-dkms dkms pve-headers-$(uname -r) &>/dev/null
+    cd /tmp
+    rm -rf gasket-driver
+    git clone https://github.com/google/gasket-driver.git &>/dev/null
+    cd gasket-driver/
+    debuild -us -uc -tc -b &>/dev/null
+    dpkg -i ../gasket-dkms_1.0-18_all.deb &>/dev/null
+    apt-get install -y libedgetpu1-max &>/dev/null
+    msg_ok "Dependencias de Coral TPU instaladas correctamente."
+}
+
+# Verificar contenedores privilegiados
+get_privileged_containers() {
+    msg_info "Verificando contenedores privilegiados"
+    PRIVILEGED_CONTAINERS=$(pct list | awk 'NR>1 && system("grep -q \047unprivileged: 1\047 /etc/pve/lxc/" $1 ".conf") == 0 {print $1, $3}')
+
+    if [ -z "$PRIVILEGED_CONTAINERS" ]; then
+        msg_error "No se encontraron contenedores privilegiados."
+        exit 1
+    fi
+    msg_ok "Contenedores privilegiados detectados."
+}
+
+# Seleccionar contenedor usando whiptail
+select_container() {
+    get_privileged_containers
+
+    MENU_OPTIONS=()
+    while IFS= read -r line; do
+        CONTAINER_ID=$(echo "$line" | awk '{print $1}')
+        CONTAINER_NAME=$(echo "$line" | awk '{print $2}')
+        MENU_OPTIONS+=("$CONTAINER_ID" "$CONTAINER_NAME")
+    done <<< "$PRIVILEGED_CONTAINERS"
+
+    CONTAINER_ID=$(whiptail --title "Seleccionar Contenedor" --menu "Selecciona un contenedor para configurar:" 15 60 5 "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
+
+    if [ -z "$CONTAINER_ID" ]; then
+        msg_error "No se seleccionó ningún contenedor."
+        exit 1
+    fi
+
+    msg_ok "Contenedor seleccionado: $CONTAINER_ID"
 }
 
 # Configurar LXC para iGPU
@@ -45,22 +126,22 @@ configure_lxc_for_igpu() {
 features: nesting=1
 lxc.cgroup2.devices.allow: c 226:0 rwm
 lxc.cgroup2.devices.allow: c 226:128 rwm
+lxc.cgroup2.devices.allow: c 29:0 rwm
+lxc.mount.entry: /dev/fb0 dev/fb0 none bind,optional,create=file
 lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
+lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file
 EOF
-    log "Configuración para iGPU añadida al contenedor ${CONTAINER_ID}."
+    msg_ok "Configuración de iGPU añadida al contenedor ${CONTAINER_ID}."
 }
 
 # Configurar LXC para NVIDIA
 configure_lxc_for_nvidia() {
     CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
-    log "Obteniendo dispositivos NVIDIA..."
     NV_DEVICES=$(ls -l /dev/nv* | awk '{print $5,$6}' | sed 's/,/:/g')
 
-    # Limpiar configuraciones previas relacionadas con NVIDIA
     sed -i '/^lxc\.cgroup2\.devices\.allow: c /d' "$CONFIG_FILE"
     sed -i '/^lxc\.mount\.entry: \/dev\/nvidia/d' "$CONFIG_FILE"
 
-    # Añadir configuraciones dinámicas basadas en los dispositivos detectados
     for DEV in $NV_DEVICES; do
         echo "lxc.cgroup2.devices.allow: c $DEV rwm" >> "$CONFIG_FILE"
     done
@@ -72,162 +153,77 @@ lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file
 lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file
 lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file
 EOF
-
-    log "Configuración para NVIDIA añadida al contenedor ${CONTAINER_ID}."
+    msg_ok "Configuración de NVIDIA añadida al contenedor ${CONTAINER_ID}."
 }
 
 # Configurar LXC para Coral TPU
 configure_lxc_for_coral() {
     add_coral_repos
-    log "Configurando Coral TPU para el contenedor..."
-    if lsusb | grep -i "Global Unichip" &>/dev/null || lspci | grep -i "Global Unichip" &>/dev/null; then
-        if lsusb | grep -i "Global Unichip" &>/dev/null; then
-            log "Configurando Coral USB..."
-            cat <<EOF >> "$CONFIG_FILE"
-lxc.cgroup2.devices.allow: c 189:* rwm
-lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir
-EOF
-        fi
-        if lspci | grep -i "Global Unichip" &>/dev/null; then
-            log "Configurando Coral M.2/PCI..."
-            cat <<EOF >> "$CONFIG_FILE"
-lxc.cgroup2.devices.allow: c 29:0 rwm
-lxc.mount.entry: /dev/apex_0 dev/apex_0 none bind,optional,create=file
-EOF
-        fi
-    else
-        log "No se detectó hardware Coral TPU conectado."
-        read -p "¿Deseas instalar soporte para Coral USB y M.2/PCI de todas formas? (s/n): " RESPUESTA
-        if [[ "$RESPUESTA" =~ ^[Ss]$ ]]; then
-            log "Instalando soporte para Coral TPU..."
-            cat <<EOF >> "$CONFIG_FILE"
+    install_coral_dependencies
+
+    CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
+    cat <<EOF >> "$CONFIG_FILE"
 lxc.cgroup2.devices.allow: c 189:* rwm
 lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir
 lxc.cgroup2.devices.allow: c 29:0 rwm
 lxc.mount.entry: /dev/apex_0 dev/apex_0 none bind,optional,create=file
 EOF
-        else
-            log "Operación cancelada por el usuario."
-            return
-        fi
-    fi
-    log "Configuración para Coral añadida al contenedor ${CONTAINER_ID}."
+    msg_ok "Configuración de Coral TPU añadida al contenedor ${CONTAINER_ID}."
 }
 
-# Menú interactivo basado en select
+# Reiniciar si es necesario
+prompt_reboot() {
+    if $NEED_REBOOT; then
+        if whiptail --title "Reinicio Requerido" --yesno "Se requiere un reinicio para aplicar los cambios. ¿Deseas reiniciar ahora?" 10 60; then
+            msg_info "Reiniciando el sistema..."
+            reboot
+        else
+            msg_ok "Por favor, reinicia el sistema más tarde para aplicar los cambios."
+        fi
+    fi
+}
+
+# Menú principal
 main_menu() {
-    log "Mostrando el menú principal."
+    validate_pve_version
     PS3="Selecciona una opción: "
     OPTIONS=(
-        "Añadir aceleración gráfica iGPU"
-        "Añadir aceleración gráfica NVIDIA"
-        "Añadir Coral TPU (incluye GPU si está disponible)"
+        "Añadir iGPU"
+        "Añadir NVIDIA"
+        "Añadir Coral TPU"
         "Salir"
     )
     select OPTION in "${OPTIONS[@]}"; do
         case "$REPLY" in
             1)
-                log "Seleccionando contenedor para iGPU..."
-                select_container_id
-                pct stop "$CONTAINER_ID"
+                select_container
                 configure_lxc_for_igpu
-                pct start "$CONTAINER_ID"
+                NEED_REBOOT=true
                 break
                 ;;
             2)
-                install_nvidia_drivers
-                log "Seleccionando contenedor para NVIDIA..."
-                select_container_id
-                pct stop "$CONTAINER_ID"
+                select_container
                 configure_lxc_for_nvidia
-                pct start "$CONTAINER_ID"
+                NEED_REBOOT=true
                 break
                 ;;
             3)
-                coral_menu
+                select_container
+                configure_lxc_for_coral
+                NEED_REBOOT=true
                 break
                 ;;
             4)
-                log "Saliendo del script."
+                msg_ok "Saliendo del script."
                 exit 0
                 ;;
             *)
-                log "Opción inválida. Intenta de nuevo."
+                msg_error "Opción inválida. Intenta de nuevo."
                 ;;
         esac
     done
-}
-
-# Menú para Coral TPU
-coral_menu() {
-    log "Mostrando el menú de Coral TPU."
-    PS3="Selecciona una opción para Coral TPU: "
-    OPTIONS=(
-        "Coral + iGPU"
-        "Coral + NVIDIA"
-        "Volver"
-    )
-    select OPTION in "${OPTIONS[@]}"; do
-        case "$REPLY" in
-            1)
-                log "Seleccionando contenedor para Coral + iGPU..."
-                select_container_id
-                pct stop "$CONTAINER_ID"
-                configure_lxc_for_igpu
-                configure_lxc_for_coral
-                pct start "$CONTAINER_ID"
-                break
-                ;;
-            2)
-                log "Seleccionando contenedor para Coral + NVIDIA..."
-                select_container_id
-                pct stop "$CONTAINER_ID"
-                configure_lxc_for_nvidia
-                configure_lxc_for_coral
-                pct start "$CONTAINER_ID"
-                break
-                ;;
-            3)
-                main_menu
-                break
-                ;;
-            *)
-                log "Opción inválida. Intenta de nuevo."
-                ;;
-        esac
-    done
-}
-
-# Seleccionar contenedor interactivo
-select_container_id() {
-    local CONTAINERS=($(pct list | awk 'NR>1 {print $1}'))
-    local CONTAINER_NAMES=($(pct list | awk 'NR>1 {print $3}'))
-    local MENU_OPTIONS=()
-
-    for i in "${!CONTAINERS[@]}"; do
-        MENU_OPTIONS+=("${CONTAINERS[$i]}" "${CONTAINER_NAMES[$i]}")
-    done
-
-    echo "Contenedores disponibles:"
-    for i in "${!MENU_OPTIONS[@]}"; do
-        if (( i % 2 == 0 )); then
-            echo "$((i / 2 + 1)). ${MENU_OPTIONS[i + 1]} (ID: ${MENU_OPTIONS[i]})"
-        fi
-    done
-
-    read -p "Selecciona el número del contenedor: " CONTAINER_SELECTION
-    if [[ -n "$CONTAINER_SELECTION" && "$CONTAINER_SELECTION" =~ ^[0-9]+$ ]]; then
-        CONTAINER_ID=${CONTAINERS[$CONTAINER_SELECTION-1]}
-        if [[ -n "$CONTAINER_ID" ]]; then
-            log "Contenedor seleccionado: ${CONTAINER_NAMES[$CONTAINER_SELECTION-1]} (ID: $CONTAINER_ID)"
-        else
-            log "Error: Selección inválida."
-            select_container_id
-        fi
-    else
-        log "Error: Entrada no válida."
-        select_container_id
-    fi
+    prompt_reboot
 }
 
 main_menu
+
