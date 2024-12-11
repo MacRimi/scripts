@@ -114,7 +114,91 @@ EOF
     log "Configuración para Coral añadida al contenedor ${CONTAINER_ID}."
 }
 
-# Seleccionar el contenedor mediante dialog
+# Menú interactivo basado en select
+main_menu() {
+    log "Mostrando el menú principal."
+    PS3="Selecciona una opción: "
+    OPTIONS=(
+        "Añadir aceleración gráfica iGPU"
+        "Añadir aceleración gráfica NVIDIA"
+        "Añadir Coral TPU (incluye GPU si está disponible)"
+        "Salir"
+    )
+    select OPTION in "${OPTIONS[@]}"; do
+        case "$REPLY" in
+            1)
+                log "Seleccionando contenedor para iGPU..."
+                select_container_id
+                pct stop "$CONTAINER_ID"
+                configure_lxc_for_igpu
+                pct start "$CONTAINER_ID"
+                break
+                ;;
+            2)
+                install_nvidia_drivers
+                log "Seleccionando contenedor para NVIDIA..."
+                select_container_id
+                pct stop "$CONTAINER_ID"
+                configure_lxc_for_nvidia
+                pct start "$CONTAINER_ID"
+                break
+                ;;
+            3)
+                coral_menu
+                break
+                ;;
+            4)
+                log "Saliendo del script."
+                exit 0
+                ;;
+            *)
+                log "Opción inválida. Intenta de nuevo."
+                ;;
+        esac
+    done
+}
+
+# Menú para Coral TPU
+coral_menu() {
+    log "Mostrando el menú de Coral TPU."
+    PS3="Selecciona una opción para Coral TPU: "
+    OPTIONS=(
+        "Coral + iGPU"
+        "Coral + NVIDIA"
+        "Volver"
+    )
+    select OPTION in "${OPTIONS[@]}"; do
+        case "$REPLY" in
+            1)
+                log "Seleccionando contenedor para Coral + iGPU..."
+                select_container_id
+                pct stop "$CONTAINER_ID"
+                configure_lxc_for_igpu
+                configure_lxc_for_coral
+                pct start "$CONTAINER_ID"
+                break
+                ;;
+            2)
+                log "Seleccionando contenedor para Coral + NVIDIA..."
+                select_container_id
+                pct stop "$CONTAINER_ID"
+                configure_lxc_for_nvidia
+                configure_lxc_for_coral
+                pct start "$CONTAINER_ID"
+                break
+                ;;
+            3)
+                main_menu
+                break
+                ;;
+            *)
+                log "Opción inválida. Intenta de nuevo."
+                ;;
+        esac
+    done
+}
+
+# Seleccionar contenedor interactivo
 select_container_id() {
     local CONTAINERS=($(pct list | awk 'NR>1 {print $1}'))
     local CONTAINER_NAMES=($(pct list | awk 'NR>1 {print $3}'))
@@ -124,131 +208,26 @@ select_container_id() {
         MENU_OPTIONS+=("${CONTAINERS[$i]}" "${CONTAINER_NAMES[$i]}")
     done
 
-    CONTAINER_ID=$(dialog --clear --title "Seleccionar contenedor LXC" \
-        --menu "Selecciona un contenedor:" 15 50 10 \
-        "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
-
-    if [[ -z "$CONTAINER_ID" ]]; then
-        log "No se seleccionó ningún contenedor."
-        exit 1
-    fi
-    log "Contenedor seleccionado: $CONTAINER_ID"
-}
-
-# Selección interactiva de opciones mediante dialog
-select_option() {
-    local OPTIONS=(
-        "1" "Añadir aceleración gráfica iGPU"
-        "2" "Añadir aceleración gráfica NVIDIA"
-        "3" "Añadir Coral TPU (incluye GPU si está disponible)"
-    )
-
-    OPTION=$(dialog --clear --title "Opciones de configuración" \
-        --menu "Selecciona una opción:" 15 50 10 \
-        "${OPTIONS[@]}" 3>&1 1>&2 2>&3)
-
-    if [[ -z "$OPTION" ]]; then
-        log "No se seleccionó ninguna opción."
-        exit 1
-    fi
-    echo "$OPTION"
-}
-
-select_coral_option() {
-    local CORAL_OPTIONS=(
-        "1" "Coral + iGPU"
-        "2" "Coral + NVIDIA"
-    )
-
-    CORAL_OPTION=$(dialog --clear --title "Opciones de Coral TPU" \
-        --menu "Selecciona una opción para Coral TPU:" 15 50 10 \
-        "${CORAL_OPTIONS[@]}" 3>&1 1>&2 2>&3)
-
-    if [[ -z "$CORAL_OPTION" ]]; then
-        log "No se seleccionó ninguna opción para Coral TPU."
-        exit 1
-    fi
-    echo "$CORAL_OPTION"
-}
-
-install_nvidia_drivers() {
-    log "Instalando controladores NVIDIA en el host Proxmox..."
-    verify_and_add_repos
-    apt update && apt dist-upgrade -y
-    apt install -y git pve-headers-$(uname -r) gcc make || {
-        log "Error al instalar dependencias necesarias. Abortando instalación."
-        exit 1
-    }
-
-    log "Seleccionando y descargando controlador NVIDIA..."
-    local DRIVER_VERSION=$(dialog --inputbox "Introduce la versión del controlador NVIDIA o deja en blanco para la última versión:" 10 50 "" 3>&1 1>&2 2>&3)
-
-    if [[ -z "$DRIVER_VERSION" ]]; then
-        DRIVER_VERSION=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt)
-    fi
-
-    NVIDIA_DRIVER_URL="https://download.nvidia.com/XFree86/Linux-x86_64/$DRIVER_VERSION/NVIDIA-Linux-x86_64-$DRIVER_VERSION.run"
-
-    mkdir -p /opt/nvidia
-    cd /opt/nvidia
-    wget "$NVIDIA_DRIVER_URL" -O NVIDIA-Driver.run
-    chmod +x NVIDIA-Driver.run
-
-    ./NVIDIA-Driver.run --no-questions --ui=none --disable-nouveau || {
-        log "Error al instalar el controlador NVIDIA."
-        exit 1
-    }
-    log "Controladores NVIDIA instalados."
-    NEED_REBOOT=true
-}
-
-PS3="Selecciona una opción: "
-OPTION=$(select_option)
-
-case "$OPTION" in
-    1)
-        log "Seleccionando contenedor para iGPU..."
-        select_container_id
-        pct stop "$CONTAINER_ID"
-        configure_lxc_for_igpu
-        pct start "$CONTAINER_ID"
-        ;;
-    2)
-        install_nvidia_drivers
-        log "Seleccionando contenedor para NVIDIA..."
-        select_container_id
-        pct stop "$CONTAINER_ID"
-        configure_lxc_for_nvidia
-        pct start "$CONTAINER_ID"
-        ;;
-    3)
-        CORAL_OPTION=$(select_coral_option)
-        if [[ "$CORAL_OPTION" == "1" ]]; then
-            log "Seleccionando contenedor para Coral + iGPU..."
-            select_container_id
-            pct stop "$CONTAINER_ID"
-            configure_lxc_for_igpu
-            configure_lxc_for_coral
-            pct start "$CONTAINER_ID"
-        elif [[ "$CORAL_OPTION" == "2" ]]; then
-            log "Seleccionando contenedor para Coral + NVIDIA..."
-            select_container_id
-            pct stop "$CONTAINER_ID"
-            configure_lxc_for_nvidia
-            configure_lxc_for_coral
-            pct start "$CONTAINER_ID"
+    echo "Contenedores disponibles:"
+    for i in "${!MENU_OPTIONS[@]}"; do
+        if (( i % 2 == 0 )); then
+            echo "$((i / 2 + 1)). ${MENU_OPTIONS[i + 1]} (ID: ${MENU_OPTIONS[i]})"
         fi
-        ;;
-    *)
-        log "Opción inválida."
-        ;;
-esac
+    done
 
-if $NEED_REBOOT; then
-    dialog --yesno "Es necesario reiniciar para aplicar los cambios. ¿Deseas reiniciar ahora?" 10 50
-    if [[ $? -eq 0 ]]; then
-        reboot
+    read -p "Selecciona el número del contenedor: " CONTAINER_SELECTION
+    if [[ -n "$CONTAINER_SELECTION" && "$CONTAINER_SELECTION" =~ ^[0-9]+$ ]]; then
+        CONTAINER_ID=${CONTAINERS[$CONTAINER_SELECTION-1]}
+        if [[ -n "$CONTAINER_ID" ]]; then
+            log "Contenedor seleccionado: ${CONTAINER_NAMES[$CONTAINER_SELECTION-1]} (ID: $CONTAINER_ID)"
+        else
+            log "Error: Selección inválida."
+            select_container_id
+        fi
     else
-        log "Por favor, recuerda reiniciar el sistema más tarde."
+        log "Error: Entrada no válida."
+        select_container_id
     fi
-fi
+}
+
+main_menu
