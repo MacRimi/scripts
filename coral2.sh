@@ -6,15 +6,20 @@ log() {
 
 NEED_REBOOT=false
 
-# Verificar y configurar el repositorio "No Subscription" de Proxmox
-add_pve_no_subscription_repo() {
-    log "Verificando repositorio 'No Subscription' de Proxmox..."
+# Verificar y configurar repositorios
+verify_and_add_repos() {
+    log "Verificando y configurando repositorios necesarios..."
+    # Repositorio Proxmox "No Subscription"
     if ! grep -q "pve-no-subscription" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then
         echo "deb http://download.proxmox.com/debian/pve $(lsb_release -sc) pve-no-subscription" | tee /etc/apt/sources.list.d/pve-no-subscription.list
-        apt-get update && log "Repositorio 'No Subscription' configurado correctamente."
-    else
-        log "El repositorio 'No Subscription' ya está configurado."
     fi
+    # Repositorios Debian con firmware no libre
+    if ! grep -q "non-free-firmware" /etc/apt/sources.list; then
+        echo "deb http://deb.debian.org/debian $(lsb_release -sc) main contrib non-free-firmware
+deb http://deb.debian.org/debian $(lsb_release -sc)-updates main contrib non-free-firmware
+deb http://security.debian.org/debian-security $(lsb_release -sc)-security main contrib non-free-firmware" | tee -a /etc/apt/sources.list
+    fi
+    apt-get update && log "Repositorios configurados correctamente."
 }
 
 # Verificar si se requieren repositorios adicionales y añadirlos
@@ -30,59 +35,70 @@ add_coral_repos() {
     fi
 }
 
-install_usb_driver() {
-    log "Instalando controlador para Coral USB..."
-    apt-get install -y libedgetpu1-max && log "Controlador USB instalado correctamente." || log "Error al instalar el controlador USB."
-}
+# Función para seleccionar y descargar el controlador NVIDIA
+select_and_download_nvidia_driver() {
+    log "Obteniendo la lista de controladores NVIDIA..."
+    local LATEST_VERSION=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt)
+    echo "Última versión estable disponible: $LATEST_VERSION"
+    echo "1) Instalar la última versión ($LATEST_VERSION)"
+    echo "2) Elegir otra versión manualmente"
+    read -p "Selecciona una opción: " DRIVER_OPTION
 
-install_pci_driver() {
-    log "Instalando controlador para Coral M.2/PCI..."
-    add_pve_no_subscription_repo
-    log "Instalando controlador para Coral M.2/PCI..."
-    if ! dkms status | grep -q gasket; then
-        apt-get remove -y gasket-dkms
-        apt-get install -y git devscripts dh-dkms dkms pve-headers-$(uname -r)
-        cd /tmp
-        rm -rf gasket-driver
-        git clone https://github.com/google/gasket-driver.git
-        cd gasket-driver/
-        debuild -us -uc -tc -b
-        dpkg -i ../gasket-dkms_*.deb && log "Controlador M.2/PCI instalado correctamente." || log "Error al instalar el controlador M.2/PCI."
-        cd /tmp
-        rm -rf gasket-driver
-        NEED_REBOOT=true
+    if [[ "$DRIVER_OPTION" == "1" ]]; then
+        NVIDIA_DRIVER_URL="https://download.nvidia.com/XFree86/Linux-x86_64/$LATEST_VERSION/NVIDIA-Linux-x86_64-$LATEST_VERSION.run"
+    elif [[ "$DRIVER_OPTION" == "2" ]]; then
+        echo "Consulta las versiones disponibles aquí: https://download.nvidia.com/XFree86/Linux-x86_64/"
+        read -p "Introduce el número de versión deseado (e.g., 525.116.03): " SELECTED_VERSION
+        NVIDIA_DRIVER_URL="https://download.nvidia.com/XFree86/Linux-x86_64/$SELECTED_VERSION/NVIDIA-Linux-x86_64-$SELECTED_VERSION.run"
     else
-        log "Controlador M.2/PCI ya está instalado."
+        log "Opción inválida. Cancelando instalación."
+        exit 1
     fi
+
+    log "Descargando controlador NVIDIA desde $NVIDIA_DRIVER_URL..."
+    mkdir -p /opt/nvidia
+    cd /opt/nvidia
+    wget $NVIDIA_DRIVER_URL -O NVIDIA-Driver.run
+    chmod +x NVIDIA-Driver.run
+    log "Controlador NVIDIA descargado correctamente."
 }
 
 install_nvidia_drivers() {
     log "Instalando controladores NVIDIA en el host Proxmox..."
-    echo "deb http://deb.debian.org/debian bookworm main contrib non-free-firmware
-deb http://deb.debian.org/debian bookworm-updates main contrib non-free-firmware
-deb http://security.debian.org/debian-security bookworm-security main contrib non-free-firmware" > /etc/apt/sources.list
-
+    verify_and_add_repos
     apt update && apt dist-upgrade -y
     apt install -y git pve-headers-$(uname -r) gcc make
 
-    mkdir -p /opt/nvidia
-    cd /opt/nvidia
-    NVIDIA_DRIVER_URL="https://download.nvidia.com/XFree86/Linux-x86_64/525.116.03/NVIDIA-Linux-x86_64-525.116.03.run"
-    wget $NVIDIA_DRIVER_URL
-    chmod +x NVIDIA-Linux-x86_64-525.116.03.run
-    ./NVIDIA-Linux-x86_64-525.116.03.run --no-questions --ui=none --disable-nouveau
+    select_and_download_nvidia_driver
+
+    ./NVIDIA-Driver.run --no-questions --ui=none --disable-nouveau
     log "Controladores NVIDIA instalados."
     NEED_REBOOT=true
 }
 
 configure_lxc_for_nvidia() {
     CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
+
+    log "Obteniendo dispositivos NVIDIA..."
+    NV_DEVICES=$(ls -l /dev/nv* | awk '{print $6,$7}' | sed 's/,/:/g')
+
+    # Limpiar configuraciones previas relacionadas con NVIDIA
+    sed -i '/^lxc\.cgroup2\.devices\.allow: c 195:\*/d' "$CONFIG_FILE"
+    sed -i '/^lxc\.mount\.entry: \/dev\/nvidia/d' "$CONFIG_FILE"
+
+    # Añadir configuraciones dinámicas basadas en los dispositivos detectados
+    for DEV in $NV_DEVICES; do
+        echo "lxc.cgroup2.devices.allow: c $DEV rwm" >> "$CONFIG_FILE"
+    done
+
     cat <<EOF >> "$CONFIG_FILE"
-lxc.cgroup2.devices.allow: c 195:* rwm
 lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file
 lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file
 lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file
+lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file
+lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file
 EOF
+
     log "Configuración para NVIDIA añadida al contenedor ${CONTAINER_ID}."
 }
 
