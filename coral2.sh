@@ -35,6 +35,22 @@ add_coral_repos() {
     fi
 }
 
+# Seleccionar el contenedor mediante un menú
+select_container_id() {
+    local CONTAINERS=($(pct list | awk 'NR>1 {print $1}'))
+    local CONTAINER_NAMES=($(pct list | awk 'NR>1 {print $3}'))
+    echo "Selecciona un contenedor:"
+    PS3="Introduce el número correspondiente: "
+    select CONTAINER_ID in "${CONTAINERS[@]}"; do
+        if [[ -n "$CONTAINER_ID" ]]; then
+            echo "Contenedor seleccionado: ${CONTAINER_NAMES[$REPLY-1]} (ID: $CONTAINER_ID)"
+            break
+        else
+            echo "Opción inválida. Intenta de nuevo."
+        fi
+    done
+}
+
 # Función para seleccionar y descargar el controlador NVIDIA
 select_and_download_nvidia_driver() {
     log "Obteniendo la lista de controladores NVIDIA..."
@@ -67,11 +83,17 @@ install_nvidia_drivers() {
     log "Instalando controladores NVIDIA en el host Proxmox..."
     verify_and_add_repos
     apt update && apt dist-upgrade -y
-    apt install -y git pve-headers-$(uname -r) gcc make
+    apt install -y git pve-headers-$(uname -r) gcc make || {
+        log "Error al instalar dependencias necesarias. Abortando instalación."
+        exit 1
+    }
 
     select_and_download_nvidia_driver
 
-    ./NVIDIA-Driver.run --no-questions --ui=none --disable-nouveau
+    ./NVIDIA-Driver.run --no-questions --ui=none --disable-nouveau || {
+        log "Error al instalar el controlador NVIDIA."
+        exit 1
+    }
     log "Controladores NVIDIA instalados."
     NEED_REBOOT=true
 }
@@ -80,10 +102,10 @@ configure_lxc_for_nvidia() {
     CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
 
     log "Obteniendo dispositivos NVIDIA..."
-    NV_DEVICES=$(ls -l /dev/nv* | awk '{print $6,$7}' | sed 's/,/:/g')
+    NV_DEVICES=$(ls -l /dev/nv* | awk '{print $5,$6}' | sed 's/,/:/g')
 
     # Limpiar configuraciones previas relacionadas con NVIDIA
-    sed -i '/^lxc\.cgroup2\.devices\.allow: c 195:\*/d' "$CONFIG_FILE"
+    sed -i '/^lxc\.cgroup2\.devices\.allow: c /d' "$CONFIG_FILE"
     sed -i '/^lxc\.mount\.entry: \/dev\/nvidia/d' "$CONFIG_FILE"
 
     # Añadir configuraciones dinámicas basadas en los dispositivos detectados
@@ -104,6 +126,9 @@ EOF
 
 configure_lxc_for_igpu() {
     CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
+    sed -i '/^lxc\.cgroup2\.devices\.allow: c 226:/d' "$CONFIG_FILE"
+    sed -i '/^lxc\.mount\.entry: \/dev\/dri/d' "$CONFIG_FILE"
+
     cat <<EOF >> "$CONFIG_FILE"
 features: nesting=1
 lxc.cgroup2.devices.allow: c 226:0 rwm
@@ -150,8 +175,7 @@ select OPTION in "${OPTIONS[@]}"; do
     case $REPLY in
         1)
             echo "Selecciona el contenedor para iGPU:"
-            pct list | awk 'NR>1 {print $1 " - " $3}'
-            read -p "Introduce el ID del contenedor: " CONTAINER_ID
+            select_container_id
             pct stop "$CONTAINER_ID"
             configure_lxc_for_igpu
             pct start "$CONTAINER_ID"
@@ -159,8 +183,7 @@ select OPTION in "${OPTIONS[@]}"; do
         2)
             install_nvidia_drivers
             echo "Selecciona el contenedor para NVIDIA:"
-            pct list | awk 'NR>1 {print $1 " - " $3}'
-            read -p "Introduce el ID del contenedor: " CONTAINER_ID
+            select_container_id
             pct stop "$CONTAINER_ID"
             configure_lxc_for_nvidia
             pct start "$CONTAINER_ID"
@@ -172,8 +195,7 @@ select OPTION in "${OPTIONS[@]}"; do
                 case $REPLY in
                     1)
                         echo "Selecciona el contenedor para Coral + iGPU:"
-                        pct list | awk 'NR>1 {print $1 " - " $3}'
-                        read -p "Introduce el ID del contenedor: " CONTAINER_ID
+                        select_container_id
                         pct stop "$CONTAINER_ID"
                         configure_lxc_for_igpu
                         configure_lxc_for_coral
@@ -182,8 +204,7 @@ select OPTION in "${OPTIONS[@]}"; do
                         ;;
                     2)
                         echo "Selecciona el contenedor para Coral + NVIDIA:"
-                        pct list | awk 'NR>1 {print $1 " - " $3}'
-                        read -p "Introduce el ID del contenedor: " CONTAINER_ID
+                        select_container_id
                         pct stop "$CONTAINER_ID"
                         configure_lxc_for_nvidia
                         configure_lxc_for_coral
@@ -205,5 +226,10 @@ select OPTION in "${OPTIONS[@]}"; do
 done
 
 if $NEED_REBOOT; then
-    echo "Es necesario reiniciar el sistema para aplicar los cambios. Por favor, reinicia manualmente."
+    read -p "Es necesario reiniciar el sistema para aplicar los cambios. ¿Deseas reiniciar ahora? (s/n): " RESPUESTA
+    if [[ "$RESPUESTA" =~ ^[Ss]$ ]]; then
+        reboot
+    else
+        echo "Por favor, recuerda reiniciar el sistema más tarde."
+    fi
 fi
