@@ -83,28 +83,31 @@ install_coral_dependencies() {
     msg_ok "Dependencias de Coral TPU instaladas correctamente."
 }
 
-# Verificar contenedores privilegiados
-get_privileged_containers() {
-    msg_info "Verificando contenedores privilegiados"
-    PRIVILEGED_CONTAINERS=$(pct list | awk 'NR>1 && system("grep -q \047unprivileged: 1\047 /etc/pve/lxc/" $1 ".conf") == 0 {print $1, $3}')
-
-    if [ -z "$PRIVILEGED_CONTAINERS" ]; then
-        msg_error "No se encontraron contenedores privilegiados."
-        exit 1
+# Cambiar contenedor a privilegiado
+ensure_privileged_container() {
+    CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
+    if grep -q "^unprivileged: 1" "$CONFIG_FILE"; then
+        msg_info "El contenedor ${CONTAINER_ID} es no privilegiado. Cambiando a privilegiado..."
+        sed -i "s/^unprivileged: 1/unprivileged: 0/" "$CONFIG_FILE"
+        STORAGE_TYPE=$(pct config "$CONTAINER_ID" | grep "^rootfs:" | awk -F, '{print $2}' | cut -d'=' -f2)
+        if [[ "$STORAGE_TYPE" == "dir" ]]; then
+            STORAGE_PATH=$(pct config "$CONTAINER_ID" | grep "^rootfs:" | awk '{print $2}' | cut -d',' -f1)
+            chown -R root:root "$STORAGE_PATH"
+        fi
+        msg_ok "Contenedor cambiado a privilegiado."
+    else
+        msg_ok "El contenedor ${CONTAINER_ID} ya es privilegiado."
     fi
-    msg_ok "Contenedores privilegiados detectados."
 }
 
 # Seleccionar contenedor usando whiptail
 select_container() {
-    get_privileged_containers
-
     MENU_OPTIONS=()
     while IFS= read -r line; do
         CONTAINER_ID=$(echo "$line" | awk '{print $1}')
         CONTAINER_NAME=$(echo "$line" | awk '{print $2}')
         MENU_OPTIONS+=("$CONTAINER_ID" "$CONTAINER_NAME")
-    done <<< "$PRIVILEGED_CONTAINERS"
+    done <<< "$(pct list | awk 'NR>1 {print $1, $3}')"
 
     CONTAINER_ID=$(whiptail --title "Seleccionar Contenedor" --menu "Selecciona un contenedor para configurar:" 15 60 5 "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
 
@@ -118,6 +121,7 @@ select_container() {
 
 # Configurar LXC para iGPU
 configure_lxc_for_igpu() {
+    ensure_privileged_container
     CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
     sed -i '/^lxc\.cgroup2\.devices\.allow: c 226:/d' "$CONFIG_FILE"
     sed -i '/^lxc\.mount\.entry: \/dev\/dri/d' "$CONFIG_FILE"
@@ -136,6 +140,7 @@ EOF
 
 # Configurar LXC para NVIDIA
 configure_lxc_for_nvidia() {
+    ensure_privileged_container
     CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
     NV_DEVICES=$(ls -l /dev/nv* | awk '{print $5,$6}' | sed 's/,/:/g')
 
@@ -158,6 +163,7 @@ EOF
 
 # Configurar LXC para Coral TPU
 configure_lxc_for_coral() {
+    ensure_privileged_container
     add_coral_repos
     install_coral_dependencies
 
@@ -226,4 +232,3 @@ main_menu() {
 }
 
 main_menu
-
