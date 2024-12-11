@@ -4,6 +4,8 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
+NEED_REBOOT=false
+
 # Verificar y configurar el repositorio "No Subscription" de Proxmox
 add_pve_no_subscription_repo() {
     log "Verificando repositorio 'No Subscription' de Proxmox..."
@@ -48,98 +50,144 @@ install_pci_driver() {
         dpkg -i ../gasket-dkms_*.deb && log "Controlador M.2/PCI instalado correctamente." || log "Error al instalar el controlador M.2/PCI."
         cd /tmp
         rm -rf gasket-driver
+        NEED_REBOOT=true
     else
         log "Controlador M.2/PCI ya está instalado."
     fi
 }
 
-# Listar contenedores LXC disponibles
-echo "Selecciona el contenedor LXC al que deseas añadir recursos:"
-LXC_OPTIONS=($(pct list | awk 'NR>1 {print $1 " - " $3}'))
-if [ ${#LXC_OPTIONS[@]} -eq 0 ]; then
-    echo "No hay contenedores disponibles. Saliendo."
-    exit 1
-fi
+install_nvidia_drivers() {
+    log "Instalando controladores NVIDIA en el host Proxmox..."
+    echo "deb http://deb.debian.org/debian bookworm main contrib non-free-firmware
+deb http://deb.debian.org/debian bookworm-updates main contrib non-free-firmware
+deb http://security.debian.org/debian-security bookworm-security main contrib non-free-firmware" > /etc/apt/sources.list
 
-PS3="Selecciona el número del contenedor: "
-select LXC_OPTION in "${LXC_OPTIONS[@]}"; do
-    if [[ -n "$LXC_OPTION" ]]; then
-        CONTAINER_ID=$(echo "$LXC_OPTION" | awk '{print $1}')
-        break
-    else
-        echo "Opción inválida. Intenta de nuevo."
-    fi
-done
+    apt update && apt dist-upgrade -y
+    apt install -y git pve-headers-$(uname -r) gcc make
 
-# Verificar si el contenedor existe
-if ! pct status "$CONTAINER_ID" &>/dev/null; then
-    echo "Error: No se encontró el contenedor con ID $CONTAINER_ID"
-    exit 1
-fi
+    mkdir -p /opt/nvidia
+    cd /opt/nvidia
+    NVIDIA_DRIVER_URL="https://download.nvidia.com/XFree86/Linux-x86_64/525.116.03/NVIDIA-Linux-x86_64-525.116.03.run"
+    wget $NVIDIA_DRIVER_URL
+    chmod +x NVIDIA-Linux-x86_64-525.116.03.run
+    ./NVIDIA-Linux-x86_64-525.116.03.run --no-questions --ui=none --disable-nouveau
+    log "Controladores NVIDIA instalados."
+    NEED_REBOOT=true
+}
 
-# Menú de selección de recursos
-echo "Selecciona los recursos a añadir al contenedor:"
-OPTIONS=("Añadir aceleración gráfica iGPU" "Añadir Coral TPU (incluye iGPU si está disponible)")
-PS3="Selecciona el número de la opción: "
-select OPTION in "${OPTIONS[@]}"; do
-    if [[ -n "$OPTION" ]]; then
-        case $REPLY in
-            1) OPTION=1; break ;;
-            2) OPTION=2; break ;;
-            *) echo "Opción inválida. Intenta de nuevo." ;;
-        esac
-    fi
-done
+configure_lxc_for_nvidia() {
+    CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
+    cat <<EOF >> "$CONFIG_FILE"
+lxc.cgroup2.devices.allow: c 195:* rwm
+lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file
+lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file
+lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file
+EOF
+    log "Configuración para NVIDIA añadida al contenedor ${CONTAINER_ID}."
+}
 
-# Apagar el contenedor
-echo "Apagando el contenedor LXC..."
-pct stop "$CONTAINER_ID"
-
-# Configurar privilegios y recursos
-CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
-if grep -q "^unprivileged: 1" "$CONFIG_FILE"; then
-    echo "El contenedor es no privilegiado. Cambiando a privilegiado..."
-    sed -i "s/^unprivileged: 1/unprivileged: 0/" "$CONFIG_FILE"
-    STORAGE_TYPE=$(pct config "$CONTAINER_ID" | grep "^rootfs:" | awk -F, '{print $2}' | cut -d'=' -f2)
-    if [[ "$STORAGE_TYPE" == "dir" ]]; then
-        STORAGE_PATH=$(pct config "$CONTAINER_ID" | grep "^rootfs:" | awk '{print $2}' | cut -d',' -f1)
-        chown -R root:root "$STORAGE_PATH"
-    fi
-fi
-
-if [[ "$OPTION" == "1" || "$OPTION" == "2" ]]; then
-    if [[ -e /dev/dri/renderD128 ]]; then
-        echo "Añadiendo iGPU al contenedor..."
-        grep -q "cgroup2.devices.allow: c 226" "$CONFIG_FILE" || cat <<EOF >> "$CONFIG_FILE"
+configure_lxc_for_igpu() {
+    CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
+    cat <<EOF >> "$CONFIG_FILE"
 features: nesting=1
 lxc.cgroup2.devices.allow: c 226:0 rwm
 lxc.cgroup2.devices.allow: c 226:128 rwm
 lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
 EOF
-    fi
-fi
+    log "Configuración para iGPU añadida al contenedor ${CONTAINER_ID}."
+}
 
-if [[ "$OPTION" == "2" ]]; then
+configure_lxc_for_coral() {
     add_coral_repos
-    log "Detectando dispositivos Coral TPU..."
-    if lsusb | grep -i "Global Unichip" &>/dev/null; then
-        install_usb_driver
-        grep -q "c 189:* rwm" "$CONFIG_FILE" || cat <<EOF >> "$CONFIG_FILE"
+    log "Configurando Coral TPU para el contenedor..."
+    if lsusb | grep -i "Global Unichip" &>/dev/null || lspci | grep -i "Global Unichip" &>/dev/null; then
+        if lsusb | grep -i "Global Unichip" &>/dev/null; then
+            install_usb_driver
+        fi
+        if lspci | grep -i "Global Unichip" &>/dev/null; then
+            install_pci_driver
+        fi
+    else
+        log "No se detectó hardware Coral TPU conectado."
+        read -p "¿Deseas instalar soporte para Coral USB y M.2/PCI de todas formas? (s/n): " RESPUESTA
+        if [[ "$RESPUESTA" =~ ^[Ss]$ ]]; then
+            install_usb_driver
+            install_pci_driver
+            log "Soporte para Coral USB y M.2 instalado."
+        else
+            log "Operación cancelada por el usuario."
+            return
+        fi
+    fi
+    cat <<EOF >> "$CONFIG_FILE"
 lxc.cgroup2.devices.allow: c 189:* rwm
 lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir
-EOF
-    elif lspci | grep -i "Global Unichip" &>/dev/null; then
-        install_pci_driver
-        grep -q "c 29:0 rwm" "$CONFIG_FILE" || cat <<EOF >> "$CONFIG_FILE"
 lxc.cgroup2.devices.allow: c 29:0 rwm
 lxc.mount.entry: /dev/apex_0 dev/apex_0 none bind,optional,create=file
 EOF
-    else
-        echo "No se detectó un dispositivo Coral TPU. Verifica la conexión."
-        exit 1
-    fi
-fi
+    log "Configuración para Coral añadida al contenedor ${CONTAINER_ID}."
+}
 
-# Iniciar contenedor
-pct start "$CONTAINER_ID"
-log "Recursos añadidos correctamente al contenedor."
+PS3="Selecciona una opción: "
+OPTIONS=("Añadir aceleración gráfica iGPU" "Añadir aceleración gráfica NVIDIA" "Añadir Coral TPU (incluye GPU si está disponible)")
+select OPTION in "${OPTIONS[@]}"; do
+    case $REPLY in
+        1)
+            echo "Selecciona el contenedor para iGPU:"
+            pct list | awk 'NR>1 {print $1 " - " $3}'
+            read -p "Introduce el ID del contenedor: " CONTAINER_ID
+            pct stop "$CONTAINER_ID"
+            configure_lxc_for_igpu
+            pct start "$CONTAINER_ID"
+            ;;
+        2)
+            install_nvidia_drivers
+            echo "Selecciona el contenedor para NVIDIA:"
+            pct list | awk 'NR>1 {print $1 " - " $3}'
+            read -p "Introduce el ID del contenedor: " CONTAINER_ID
+            pct stop "$CONTAINER_ID"
+            configure_lxc_for_nvidia
+            pct start "$CONTAINER_ID"
+            ;;
+        3)
+            echo "Selecciona una opción para Coral TPU:"
+            CORAL_OPTIONS=("Coral + iGPU" "Coral + NVIDIA")
+            select CORAL_OPTION in "${CORAL_OPTIONS[@]}"; do
+                case $REPLY in
+                    1)
+                        echo "Selecciona el contenedor para Coral + iGPU:"
+                        pct list | awk 'NR>1 {print $1 " - " $3}'
+                        read -p "Introduce el ID del contenedor: " CONTAINER_ID
+                        pct stop "$CONTAINER_ID"
+                        configure_lxc_for_igpu
+                        configure_lxc_for_coral
+                        pct start "$CONTAINER_ID"
+                        break
+                        ;;
+                    2)
+                        echo "Selecciona el contenedor para Coral + NVIDIA:"
+                        pct list | awk 'NR>1 {print $1 " - " $3}'
+                        read -p "Introduce el ID del contenedor: " CONTAINER_ID
+                        pct stop "$CONTAINER_ID"
+                        configure_lxc_for_nvidia
+                        configure_lxc_for_coral
+                        pct start "$CONTAINER_ID"
+                        break
+                        ;;
+                    *)
+                        echo "Opción inválida. Intenta de nuevo."
+                        ;;
+                esac
+            done
+            ;;
+        *)
+            echo "Opción inválida. Intenta de nuevo."
+            ;;
+    esac
+    break
+
+done
+
+if $NEED_REBOOT; then
+    echo "Es necesario reiniciar el sistema para aplicar los cambios. Por favor, reinicia manualmente."
+fi
