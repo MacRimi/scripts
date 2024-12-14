@@ -32,12 +32,10 @@ NEED_REBOOT=false
 
 # Validar la versión de Proxmox
 validate_pve_version() {
-    if ! pveversion | grep -Eq "pve-manager/(8\.[1-3])"; then
-        msg_error "Esta versión de Proxmox no es compatible."
-        echo -e "Requiere Proxmox VE 8.1 o superior. Saliendo..."
+    if ! pveversion | grep -Eq "pve-manager/(8\\..+|[9-9])"; then
+        msg_error "Esta versión de Proxmox no es compatible. Requiere Proxmox VE 8.0 o superior."
         exit 1
     fi
-    msg_ok "Versión de Proxmox compatible."
 }
 
 # Verificar y configurar repositorios
@@ -135,7 +133,10 @@ lxc.mount.entry: /dev/fb0 dev/fb0 none bind,optional,create=file
 lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
 lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file
 EOF
-    msg_ok "Configuración de iGPU añadida al contenedor ${CONTAINER_ID}."
+
+    msg_info "Instalando drivers de iGPU en el contenedor ${CONTAINER_ID}"
+    pct exec "$CONTAINER_ID" -- bash -c "apt-get update && apt-get install -y vainfo intel-media-va-driver-non-free intel-gpu-tools && adduser root video && adduser root render" &>/dev/null
+    msg_ok "Drivers de iGPU instalados en el contenedor ${CONTAINER_ID}."
 }
 
 # Configurar LXC para NVIDIA
@@ -177,10 +178,10 @@ EOF
     msg_ok "Configuración de Coral TPU añadida al contenedor ${CONTAINER_ID}."
 }
 
-# Reiniciar si es necesario
+# Sugerir reinicio si es necesario
 prompt_reboot() {
     if $NEED_REBOOT; then
-        if whiptail --title "Reinicio Requerido" --yesno "Se requiere un reinicio para aplicar los cambios. ¿Deseas reiniciar ahora?" 10 60; then
+        if whiptail --title "Reinicio Requerido" --yesno "Se recomienda reiniciar para aplicar los cambios. ¿Deseas reiniciar ahora?" 10 60; then
             msg_info "Reiniciando el sistema..."
             reboot
         else
@@ -192,42 +193,45 @@ prompt_reboot() {
 # Menú principal
 main_menu() {
     validate_pve_version
-    PS3="Selecciona una opción: "
     OPTIONS=(
         "Añadir iGPU"
         "Añadir NVIDIA"
         "Añadir Coral TPU"
         "Salir"
     )
-    select OPTION in "${OPTIONS[@]}"; do
-        case "$REPLY" in
-            1)
-                select_container
-                configure_lxc_for_igpu
-                NEED_REBOOT=true
-                break
-                ;;
-            2)
-                select_container
-                configure_lxc_for_nvidia
-                NEED_REBOOT=true
-                break
-                ;;
-            3)
-                select_container
-                configure_lxc_for_coral
-                NEED_REBOOT=true
-                break
-                ;;
-            4)
-                msg_ok "Saliendo del script."
-                exit 0
-                ;;
-            *)
-                msg_error "Opción inválida. Intenta de nuevo."
-                ;;
-        esac
-    done
+
+    OPTION=$(whiptail --title "Menú Principal" --menu "Selecciona una opción:" 15 60 4 \
+        1 "Añadir iGPU" \
+        2 "Añadir NVIDIA" \
+        3 "Añadir Coral TPU" \
+        4 "Salir" 3>&1 1>&2 2>&3)
+
+    case "$OPTION" in
+        1)
+            select_container
+            configure_lxc_for_igpu
+            msg_ok "Configuración de iGPU completada. No es necesario reiniciar."
+            ;;
+        2)
+            select_container
+            configure_lxc_for_nvidia
+            NEED_REBOOT=true
+            ;;
+        3)
+            select_container
+            configure_lxc_for_coral
+            NEED_REBOOT=true
+            ;;
+        4)
+            msg_ok "Saliendo del script."
+            exit 0
+            ;;
+        *)
+            msg_error "Opción inválida. Intenta de nuevo."
+            main_menu
+            ;;
+    esac
+
     prompt_reboot
 }
 
