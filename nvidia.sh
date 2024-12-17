@@ -43,8 +43,13 @@ apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 log "Obteniendo lista de drivers NVIDIA..."
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
 
-# Obtener la lista de versiones sin el "/" final usando sed
-driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | sed -n 's/.*>\([0-9]\{3\}\.[0-9]\{2,\}\.[0-9]\{2\}\)\/<.*/\1/p' | sort -Vr | uniq | head -n 10 | tr '\n' ' ')
+# Obtener la lista de versiones válidas
+driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -oP '(?<=href=\")[0-9]{3}\.[0-9]{2,}\.[0-9]{2}(?=/)' | sort -Vr | uniq | head -n 10)
+
+# Verificar si driver_list está vacío
+if [ -z "$driver_list" ]; then
+    error "No se pudo obtener la lista de controladores NVIDIA. Verifica tu conexión a Internet."
+fi
 
 # Obtener la última versión del controlador NVIDIA
 latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}')
@@ -60,18 +65,21 @@ for driver in $driver_list; do
     count=$((count+1))
 done
 
+# Mostrar el menú
 selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 15 50 10 $options 3>&1 1>&2 2>&3)
 
 if [[ ! "$selection" =~ ^[0-9]+$ ]]; then
     error "Selección inválida o cancelada por el usuario."
 fi
 
+# Asignar la versión seleccionada
 if [ "$selection" -eq 1 ]; then
     selected_driver=$latest_driver
 else
-    selected_driver=$(echo $driver_list | tr ' ' '\n' | sed -n "$((selection-1))p")
+    selected_driver=$(echo "$driver_list" | sed -n "${selection}p")
 fi
 
+# Descargar e instalar el driver seleccionado
 DRIVER_RUN="NVIDIA-Linux-x86_64-$selected_driver.run"
 log "Descargando e instalando driver $selected_driver..."
 wget -q https://download.nvidia.com/XFree86/Linux-x86_64/$selected_driver/$DRIVER_RUN -O $DRIVER_RUN
