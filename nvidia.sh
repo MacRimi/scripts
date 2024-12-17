@@ -44,11 +44,13 @@ log "Obteniendo lista de drivers NVIDIA..."
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
 
 # Obtener la lista de versiones válidas
-driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -oP '(?<=href=\")[0-9]{3}\.[0-9]{2,}\.[0-9]{2}(?=/)' | sort -Vr | uniq | head -n 10)
+driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | \
+awk -F"'" '/<a href=.*/ { if ($2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\/$/) print substr($2, 1, length($2)-1) }' | \
+sort -Vr | uniq | head -n 10)
 
-# Verificar si driver_list está vacío
+# Verificar si la lista está vacía
 if [ -z "$driver_list" ]; then
-    error "No se pudo obtener la lista de controladores NVIDIA. Verifica tu conexión a Internet."
+    error "No se pudo obtener la lista de controladores NVIDIA. Verifica tu conexión."
 fi
 
 # Obtener la última versión del controlador NVIDIA
