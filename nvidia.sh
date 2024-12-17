@@ -60,7 +60,6 @@ for driver in $driver_list; do
     count=$((count+1))
 done
 
-
 selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 15 50 10 $options 3>&1 1>&2 2>&3)
 
 if [[ ! "$selection" =~ ^[0-9]+$ ]]; then
