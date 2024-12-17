@@ -72,7 +72,7 @@ if [ -z "$latest_driver" ]; then
     error "No se pudo obtener la última versión del controlador NVIDIA."
 fi
 
-# Menú de selección de drivers
+# 6. Construir menú de selección
 log "Construyendo menú de selección..."
 menu_options=("1" "Instalar último driver ($latest_driver)")
 count=2
@@ -81,12 +81,16 @@ while read -r driver; do
     count=$((count + 1))
 done <<< "$driver_list"
 
+# Mostrar menú
+log "Mostrando menú para seleccionar el driver..."
 selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 20 70 10 "${menu_options[@]}" 3>&1 1>&2 2>&3)
 
+# Validar selección
 if [ -z "$selection" ]; then
     error "Selección cancelada por el usuario."
 fi
 
+# Determinar driver seleccionado
 if [ "$selection" -eq 1 ]; then
     selected_driver=$latest_driver
 else
@@ -94,6 +98,10 @@ else
 fi
 
 log "Driver seleccionado: $selected_driver"
+
+# Simulación de instalación del driver (añadir lógica real si funciona)
+log "Descargar e instalar driver $selected_driver aquí..."
+
 
 # Descargar e instalar el driver seleccionado
 log "Descargando e instalando driver $selected_driver..."
