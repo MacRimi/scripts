@@ -41,26 +41,16 @@ apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 
 # 3. Menú para selección de driver NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
-log "Verificando conexión y contenido de la URL..."
-curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | head -n 50
-
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
 
-log "Obteniendo lista de drivers NVIDIA..."
-
-# Extraer versiones sin usar expresiones avanzadas
+# Obtener la lista de versiones válidas
 driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | \
-grep -o "href='[0-9]\{3\}\.[0-9]\{2,\}\.[0-9]\{2\}/'" | \
+grep -o "href='[0-9]\\{3\\}\\.[0-9]\\{2,\\}\\.[0-9]\\{2\\}/'" | \
 sed "s/href='\(.*\)\/'/\1/" | sort -Vr | uniq | head -n 10)
 
-# Depurar: Ver la lista obtenida
-echo "Lista de versiones obtenida: $driver_list"
-
-# Validar si está vacío
 if [ -z "$driver_list" ]; then
     error "No se pudo obtener la lista de controladores NVIDIA. Verifica tu conexión."
 fi
-
 
 # Obtener la última versión del controlador NVIDIA
 latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}')
@@ -69,15 +59,17 @@ if [ -z "$latest_driver" ]; then
 fi
 
 # Construir el menú de opciones
-options="\n1 Instalar último driver ($latest_driver)\n"
+formatted_list=""
 count=2
 for driver in $driver_list; do
-    options+="$count $driver\n"
+    formatted_list+="$count $driver "
     count=$((count+1))
 done
 
+options="1 Instalar último driver ($latest_driver) $formatted_list"
+
 # Mostrar el menú
-selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 15 50 10 $options 3>&1 1>&2 2>&3)
+selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 20 70 10 $options 3>&1 1>&2 2>&3)
 
 if [[ ! "$selection" =~ ^[0-9]+$ ]]; then
     error "Selección inválida o cancelada por el usuario."
@@ -87,7 +79,7 @@ fi
 if [ "$selection" -eq 1 ]; then
     selected_driver=$latest_driver
 else
-    selected_driver=$(echo "$driver_list" | sed -n "${selection}p")
+    selected_driver=$(echo "$driver_list" | sed -n "$((selection-1))p")
 fi
 
 # Descargar e instalar el driver seleccionado
