@@ -57,7 +57,11 @@ done
 
 selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 15 50 10 $options 3>&1 1>&2 2>&3)
 
-if [[ "$selection" =~ ^[0-9]+$ && "$selection" -eq 1 ]]; then
+if [[ ! "$selection" =~ ^[0-9]+$ ]]; then
+    error "Selección inválida o cancelada por el usuario."
+fi
+
+if [ "$selection" -eq 1 ]; then
     selected_driver=$latest_driver
 else
     selected_driver=$(echo $driver_list | tr ' ' '\n' | sed -n "$((selection-1))p")
@@ -76,8 +80,8 @@ CONFIGURE_LXC_FOR_NVIDIA() {
     available_lxc=$(pct list | awk 'NR>1 {print $1, $3}')
     lxc_selection=$(whiptail --title "Seleccionar LXC" --menu "Selecciona un contenedor para instalar los drivers NVIDIA:" 20 70 10 $available_lxc 3>&1 1>&2 2>&3)
 
-    if [ $? -ne 0 ]; then
-        error "Configuración cancelada."
+    if [[ ! "$lxc_selection" =~ ^[0-9]+$ ]]; then
+        error "Selección inválida o cancelada."
     fi
 
     CONFIG_FILE="/etc/pve/lxc/${lxc_selection}.conf"
@@ -112,7 +116,8 @@ CONFIGURE_LXC_FOR_NVIDIA
 
 if [ "$reboot_required" = true ]; then
     touch "$RESTART_FILE"
-    log "Reinicio necesario. Una vez reiniciado, vuelve a ejecutar este script para completar la configuración."
+    log "Reinicio necesario. Por favor, reinicia y vuelve a ejecutar el script:"
+    log "bash -c \"\$(wget -qLO - https://raw.githubusercontent.com/MacRimi/scripts/refs/heads/main/nvidia.sh)\""
     exit 0
 fi
 
