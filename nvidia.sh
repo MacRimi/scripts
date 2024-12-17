@@ -42,7 +42,7 @@ apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 # 3. Menú para selección de driver NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
-driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}' | sort -Vr | head -n 10)
+driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}' | sort -Vr | head -n 10 | tr -s '\n' ' ')
 latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}')
 if [ -z "$latest_driver" ]; then
     error "No se pudo obtener la última versión del controlador NVIDIA."
@@ -51,20 +51,13 @@ fi
 options="\n1 Instalar último driver ($latest_driver)\n"
 count=2
 for driver in $driver_list; do
-    if [[ "$driver" =~ ^[0-9]{3}\.[0-9]{3}\.[0-9]{2}$ ]]; then
-        options+="$count $driver\n"
-        count=$((count+1))
-    fi
+    options+="$count $driver\n"
+    count=$((count+1))
 done
-
 
 selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 15 50 10 $options 3>&1 1>&2 2>&3)
 
-if [ $? -ne 0 ]; then
-    error "Instalación cancelada por el usuario."
-fi
-
-if [ "$selection" -eq 1 ]; then
+if [[ "$selection" =~ ^[0-9]+$ && "$selection" -eq 1 ]]; then
     selected_driver=$latest_driver
 else
     selected_driver=$(echo $driver_list | tr ' ' '\n' | sed -n "$((selection-1))p")
@@ -88,7 +81,11 @@ CONFIGURE_LXC_FOR_NVIDIA() {
     fi
 
     CONFIG_FILE="/etc/pve/lxc/${lxc_selection}.conf"
-    NV_DEVICES=$(ls -l /dev/nv* | awk '{print $5,$6}' | sed 's/,/:/g')
+    if ls /dev/nv* > /dev/null 2>&1; then
+        NV_DEVICES=$(ls -l /dev/nv* | awk '{print $5,$6}' | sed 's/,/:/g')
+    else
+        error "No se encontraron dispositivos NVIDIA en /dev/nv*."
+    fi
 
     # Limpiar configuraciones previas
     sed -i '/^lxc\.cgroup2\.devices\.allow: c /d' "$CONFIG_FILE"
