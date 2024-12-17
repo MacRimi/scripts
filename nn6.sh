@@ -43,9 +43,9 @@ log "Obteniendo lista de drivers NVIDIA..."
 html_output=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/)
 driver_list=$(echo "$html_output" | grep -oP "href='[0-9]+\.[0-9]+\.[0-9]+/'" | awk -F"'" '{print $2}' | sed 's:/$::' | sort -Vr | head -n 10)
 
-# Mostrar la lista obtenida
+# Verificar la lista de drivers obtenida
 if [ -z "$driver_list" ]; then
-    error "No se pudo obtener la lista de controladores NVIDIA. Verifica el formato del HTML."
+    error "No se pudo obtener la lista de controladores NVIDIA."
 else
     log "Lista de drivers obtenida correctamente:"
     echo "$driver_list"
@@ -54,12 +54,11 @@ fi
 # Obtener la última versión del driver desde latest.txt
 log "Obteniendo la última versión del driver desde $NVIDIA_DRIVER_URL..."
 latest_output=$(wget -qO- "$NVIDIA_DRIVER_URL")
-
-# Extraer solo el número de versión
 latest_driver=$(echo "$latest_output" | awk '{print $1}' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
 
 if [ -z "$latest_driver" ]; then
-    error "No se pudo obtener la última versión del controlador NVIDIA. Verifica el formato de latest.txt."
+    log "No se pudo extraer la última versión del driver desde latest.txt. Usando el driver más reciente de la lista."
+    latest_driver=$(echo "$driver_list" | head -n 1)
 fi
 
 log "Último driver encontrado: $latest_driver"
@@ -75,12 +74,7 @@ done <<< "$driver_list"
 
 # Mostrar menú
 log "Mostrando menú para seleccionar el driver..."
-selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 20 70 10 "${menu_options[@]}" 3>&1 1>&2 2>&3)
-
-# Validar selección
-if [ -z "$selection" ]; then
-    error "Selección cancelada por el usuario."
-fi
+selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 20 70 10 "${menu_options[@]}" 3>&1 1>&2 2>&3 || error "Selección cancelada por el usuario.")
 
 # Determinar driver seleccionado
 if [ "$selection" -eq 1 ]; then
