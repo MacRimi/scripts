@@ -42,7 +42,7 @@ apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 # 3. Menú para selección de driver NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
-driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}' | sort -Vr | head -n 10 | tr '\n' ' ')
+driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}' | sort -Vr | head -n 10)
 latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}')
 if [ -z "$latest_driver" ]; then
     error "No se pudo obtener la última versión del controlador NVIDIA."
@@ -51,9 +51,12 @@ fi
 options="\n1 Instalar último driver ($latest_driver)\n"
 count=2
 for driver in $driver_list; do
-    options+="$count $driver\n"
-    count=$((count+1))
+    if [[ "$driver" =~ ^[0-9]{3}\.[0-9]{3}\.[0-9]{2}$ ]]; then
+        options+="$count $driver\n"
+        count=$((count+1))
+    fi
 done
+
 
 selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 15 50 10 $options 3>&1 1>&2 2>&3)
 
