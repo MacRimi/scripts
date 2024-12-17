@@ -39,11 +39,14 @@ log "Actualizando repositorios y paquetes..."
 apt update && apt dist-upgrade -y
 apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 
-# 3. Menú para seleccion de driver NVIDIA
+# 3. Menú para selección de driver NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
 driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}' | sort -Vr | head -n 10 | tr '\n' ' ')
-latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL)
+latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}')
+if [ -z "$latest_driver" ]; then
+    error "No se pudo obtener la última versión del controlador NVIDIA."
+fi
 
 options="\n1 Instalar último driver ($latest_driver)\n"
 count=2
