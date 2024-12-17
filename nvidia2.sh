@@ -41,17 +41,26 @@ apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 
 # 3. Menú para selección de driver NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
+log "Verificando conexión y contenido de la URL..."
+curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | head -n 50
+
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
 
-# Obtener la lista de versiones válidas
-driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | \
-awk -F"'" '/<a href=.*/ { if ($2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\/$/) print substr($2, 1, length($2)-1) }' | \
-sort -Vr | uniq | head -n 10)
+log "Obteniendo lista de drivers NVIDIA..."
 
-# Verificar si la lista está vacía
+# Extraer versiones sin usar expresiones avanzadas
+driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | \
+grep -o "href='[0-9]\{3\}\.[0-9]\{2,\}\.[0-9]\{2\}/'" | \
+sed "s/href='\(.*\)\/'/\1/" | sort -Vr | uniq | head -n 10)
+
+# Depurar: Ver la lista obtenida
+echo "Lista de versiones obtenida: $driver_list"
+
+# Validar si está vacío
 if [ -z "$driver_list" ]; then
     error "No se pudo obtener la lista de controladores NVIDIA. Verifica tu conexión."
 fi
+
 
 # Obtener la última versión del controlador NVIDIA
 latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}')
