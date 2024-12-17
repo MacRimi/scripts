@@ -36,10 +36,32 @@ log "Actualizando repositorios y paquetes..."
 apt update && apt dist-upgrade -y
 apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 
-# Obtener lista de drivers NVIDIA
+# 5. Obtener lista de drivers NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
-driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | \
-grep -oP "href='[0-9]+\.[0-9]+\.[0-9]+/'" | awk -F"'" '{print $2}' | sed 's:/$::' | sort -Vr | head -n 10)
+
+# Obtener y mostrar el HTML completo para depuración
+html_output=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/)
+log "HTML descargado con éxito. Mostrando las primeras 20 líneas:"
+echo "$html_output" | head -n 20
+
+# Extraer la lista de drivers
+driver_list=$(echo "$html_output" | grep -oP "href='[0-9]+\.[0-9]+\.[0-9]+/'" | awk -F"'" '{print $2}' | sed 's:/$::' | sort -Vr | head -n 10)
+
+# Mostrar la lista obtenida
+if [ -z "$driver_list" ]; then
+    error "No se pudo obtener la lista de controladores NVIDIA. Verifica el formato del HTML."
+else
+    log "Lista de drivers obtenida correctamente:"
+    echo "$driver_list"
+fi
+
+# Obtener el último driver
+latest_driver=$(wget -qO- "$NVIDIA_DRIVER_URL" | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}')
+if [ -z "$latest_driver" ]; then
+    error "No se pudo obtener la última versión del controlador NVIDIA."
+fi
+
+log "Último driver encontrado: $latest_driver"
 
 if [ -z "$driver_list" ]; then
     error "No se pudo obtener la lista de controladores NVIDIA."
