@@ -58,11 +58,21 @@ fi
 log "Lista de drivers obtenida:"
 echo "$driver_list"
 
-# Obtener el último driver
-latest_driver=$(wget -qO- "$NVIDIA_DRIVER_URL" | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}') || error "Error al obtener la última versión del driver."
+log "Obteniendo la última versión del driver desde $NVIDIA_DRIVER_URL..."
+latest_output=$(wget -qO- "$NVIDIA_DRIVER_URL")
+
+# Mostrar el contenido de latest.txt para depuración
+log "Contenido de latest.txt:"
+echo "$latest_output"
+
+# Extraer la versión
+latest_driver=$(echo "$latest_output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
+
 if [ -z "$latest_driver" ]; then
-    error "No se pudo obtener la última versión del controlador NVIDIA."
+    error "No se pudo obtener la última versión del controlador NVIDIA. Verifica el formato de latest.txt."
 fi
+
+
 
 log "Último driver encontrado: $latest_driver"
 
