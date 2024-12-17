@@ -5,7 +5,6 @@
 set -e
 
 # Variables
-NVIDIA_DRIVER_URL="https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt"
 DRIVER_DIR="/opt/nvidia"
 RESTART_FILE="/nvidia_install_restart.flag"
 
@@ -38,47 +37,38 @@ apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 
 # Obtener lista de drivers NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
+driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | \
+grep -oP "href='[0-9]+\.[0-9]+\.[0-9]+/'" | awk -F"'" '{print $2}' | sed 's:/$::' | sort -Vr | head -n 10)
 
-# Descargar y filtrar la lista de drivers
-html_output=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/)
-driver_list=$(echo "$html_output" | grep -oP "href='[0-9]+\.[0-9]+\.[0-9]+/'" | awk -F"'" '{print $2}' | sed 's:/$::' | sort -Vr | head -n 10)
-
-# Verificar la lista de drivers obtenida
+# Verificar la lista obtenida
 if [ -z "$driver_list" ]; then
     error "No se pudo obtener la lista de controladores NVIDIA."
-else
-    log "Lista de drivers obtenida correctamente:"
-    echo "$driver_list"
 fi
 
-# Obtener la última versión del driver desde latest.txt
-log "Obteniendo la última versión del driver desde $NVIDIA_DRIVER_URL..."
-latest_output=$(wget -qO- "$NVIDIA_DRIVER_URL")
-latest_driver=$(echo "$latest_output" | awk '{print $1}' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
-
-if [ -z "$latest_driver" ]; then
-    log "No se pudo extraer la última versión del driver desde latest.txt. Usando el driver más reciente de la lista."
-    latest_driver=$(echo "$driver_list" | head -n 1)
-fi
-
-log "Último driver encontrado: $latest_driver"
+log "Lista de drivers obtenida correctamente:"
+echo "$driver_list"
 
 # Construir menú de selección
 log "Construyendo menú de selección..."
-menu_options=("1" "Instalar último driver ($latest_driver)")
+menu_options=()
+menu_options+=("1" "Instalar último driver (latest)")
+
 count=2
 while read -r driver; do
     menu_options+=("$count" "$driver")
     count=$((count + 1))
 done <<< "$driver_list"
 
-# Mostrar menú
-log "Mostrando menú para seleccionar el driver..."
-selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 20 70 10 "${menu_options[@]}" 3>&1 1>&2 2>&3 || error "Selección cancelada por el usuario.")
+# Mostrar el menú
+selection=$(whiptail --title "Seleccionar Driver NVIDIA" --menu "Elige una opción:" 20 70 10 "${menu_options[@]}" 3>&1 1>&2 2>&3)
+
+if [ -z "$selection" ]; then
+    error "Selección cancelada por el usuario."
+fi
 
 # Determinar driver seleccionado
 if [ "$selection" -eq 1 ]; then
-    selected_driver=$latest_driver
+    selected_driver=$(echo "$driver_list" | head -n 1) # Último driver en la lista
 else
     selected_driver=$(echo "$driver_list" | sed -n "$((selection-1))p")
 fi
@@ -98,7 +88,7 @@ fi
 chmod +x "$DRIVER_RUN"
 ./"$DRIVER_RUN" --no-questions --ui=none --disable-nouveau || error "Error al instalar el driver NVIDIA."
 
-# Añadir módulos VFIO y NVIDIA
+# Configurar módulos VFIO y NVIDIA
 log "Configurando módulos VFIO y NVIDIA..."
 cat > /etc/modules-load.d/modules.conf <<EOF
 vfio
