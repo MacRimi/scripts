@@ -25,7 +25,8 @@ reboot_required=false
 if [ -f "$RESTART_FILE" ]; then
     log "Reanudando la instalación después del reinicio..."
     rm -f "$RESTART_FILE"
-    goto CONFIGURE_LXC_FOR_NVIDIA
+    CONFIGURE_LXC_FOR_NVIDIA
+    exit 0
 fi
 
 # 1. Blacklist nouveau
@@ -41,7 +42,7 @@ apt install -y git pve-headers-$(uname -r) gcc make wget whiptail
 # 3. Menú para seleccion de driver NVIDIA
 log "Obteniendo lista de drivers NVIDIA..."
 mkdir -p $DRIVER_DIR && cd $DRIVER_DIR
-driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}' | sort -Vr | head -n 10)
+driver_list=$(curl -s https://download.nvidia.com/XFree86/Linux-x86_64/ | grep -Eo '[0-9]{3}\.[0-9]{3}\.[0-9]{2}' | sort -Vr | head -n 10 | tr '\n' ' ')
 latest_driver=$(wget -qO- $NVIDIA_DRIVER_URL)
 
 options="\n1 Instalar último driver ($latest_driver)\n"
@@ -60,7 +61,7 @@ fi
 if [ "$selection" -eq 1 ]; then
     selected_driver=$latest_driver
 else
-    selected_driver=$(echo $driver_list | awk -v n=$(($selection-1)) '{print $n}')
+    selected_driver=$(echo $driver_list | tr ' ' '\n' | sed -n "$((selection-1))p")
 fi
 
 DRIVER_RUN="NVIDIA-Linux-x86_64-$selected_driver.run"
@@ -106,14 +107,12 @@ EOF
 
 CONFIGURE_LXC_FOR_NVIDIA
 
-touch "$RESTART_FILE"
-log "Reinicio necesario. Una vez reiniciado, vuelve a ejecutar este script para completar la configuración."
-exit 0
+if [ "$reboot_required" = true ]; then
+    touch "$RESTART_FILE"
+    log "Reinicio necesario. Una vez reiniciado, vuelve a ejecutar este script para completar la configuración."
+    exit 0
+fi
 
 # Mensaje final
-if [ "$reboot_required" = true ]; then
-    log "Es necesario reiniciar el servidor para aplicar los cambios. Por favor, reinicia manualmente y vuelve a ejecutar este script."
-else
-    log "Proceso completado exitosamente."
-fi
+log "Proceso completado exitosamente."
 exit 0
