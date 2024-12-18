@@ -20,6 +20,15 @@ msg_error() {
     echo -e " ${RD}[ERROR] $1${CL}"
 }
 
+# Verificar la versión de Proxmox
+validate_pve_version() {
+    if ! pveversion | grep -Eq "pve-manager/(8\\.[0-9]+)"; then
+        msg_error "Esta versión de Proxmox no es compatible. Se requiere Proxmox VE 8.0 o superior."
+        exit 1
+    fi
+    msg_ok "Versión de Proxmox compatible."
+}
+
 # Selección del contenedor LXC
 select_container() {
     CONTAINERS=$(pct list | awk 'NR>1 {print $1, $3}')
