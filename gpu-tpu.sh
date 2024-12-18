@@ -171,20 +171,54 @@ install_igpu_in_container() {
     msg_ok "Controladores de iGPU instalados dentro del contenedor."
 }
 
-# Instalar controladores Coral TPU en el host
+##########################################################
+
 install_coral_host() {
+    FORCE_REINSTALL=$1
+
+    # Verificar si el controlador ya está instalado
+    if [ "$FORCE_REINSTALL" != "--force" ]; then
+        msg_info "Verificando si los controladores de Coral TPU ya están instalados..."
+        if dpkg -l | grep -qw gasket-dkms; then
+            msg_ok "Los controladores de Coral TPU ya están instalados."
+            return 0
+        fi
+    fi
+
     msg_info "Instalando controladores de Coral TPU en el host..."
     verify_and_add_repos
-    apt-get install -y git devscripts dh-dkms dkms pve-headers-$(uname -r) &>/dev/null
+    apt-get install -y git devscripts dh-dkms dkms pve-headers-$(uname -r)
+
+    # Clonar la rama predeterminada del repositorio
     cd /tmp
     rm -rf gasket-driver
-    git clone https://github.com/google/gasket-driver.git &>/dev/null
+    msg_info "Clonando la rama predeterminada del repositorio de Google Coral..."
+    git clone https://github.com/google/gasket-driver.git
+    if [ $? -ne 0 ]; then
+        msg_error "No se pudo clonar el repositorio."
+        exit 1
+    fi
+
     cd gasket-driver/
-    debuild -us -uc -tc -b &>/dev/null
-    dpkg -i ../gasket-dkms_1.0-18_all.deb &>/dev/null
-    msg_ok "Controladores de Coral TPU instalados en el host."
+
+    # Construir e instalar el paquete .deb
+    debuild -us -uc -tc -b
+    if [ $? -ne 0 ]; then
+        msg_error "Error al construir los paquetes del controlador."
+        exit 1
+    fi
+
+    dpkg -i ../gasket-dkms_*.deb
+    if [ $? -ne 0 ]; then
+        msg_error "Error al instalar los paquetes del controlador."
+        exit 1
+    fi
+
+    msg_ok "Controladores de Coral TPU instalados en el host desde la rama predeterminada."
 }
 
+
+################################################
 # Instalar controladores Coral TPU en el contenedor
 install_coral_in_container() {
     msg_info "Detectando dispositivos Coral TPU dentro del contenedor..."
@@ -207,10 +241,12 @@ install_coral_in_container() {
 
     pct start "$CONTAINER_ID"
     pct exec "$CONTAINER_ID" -- bash -c "
-    apt-get update && apt-get install -y gnupg
-    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg
-    echo 'deb [signed-by=/usr/share/keyrings/coral-edgetpu.gpg] https://packages.cloud.google.com/apt coral-edgetpu-stable main' | tee /etc/apt/sources.list.d/coral-edgetpu.list
-    apt-get update && apt-get install -y $DRIVER_PACKAGE
+    apt-get update && \
+    apt-get install -y gnupg python3 python3-pip python3-venv && \
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg && \
+    echo 'deb [signed-by=/usr/share/keyrings/coral-edgetpu.gpg] https://packages.cloud.google.com/apt coral-edgetpu-stable main' | tee /etc/apt/sources.list.d/coral-edgetpu.list && \
+    apt-get update && \
+    apt-get install -y $DRIVER_PACKAGE
     "
     msg_ok "Controladores de Coral TPU instalados dentro del contenedor."
 }
@@ -230,7 +266,12 @@ main_menu() {
             install_igpu_in_container
             ;;
         2)
-            install_coral_host
+            if (whiptail --title "Instalación Coral" --yesno "¿Deseas forzar la instalación de Coral en el host?" 8 58); then
+                  install_coral_host --force
+             else
+                  install_coral_host
+             fi
+           # install_coral_host
             configure_lxc_for_coral
             install_coral_in_container
             configure_lxc_for_igpu
