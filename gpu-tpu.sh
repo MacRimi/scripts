@@ -120,10 +120,9 @@ EOF
 install_igpu_in_container() {
     msg_info "Instalando controladores de iGPU dentro del contenedor..."
     pct start "$CONTAINER_ID"
+    VERBOSE_OPTION=$(whiptail --title "Modo Verbose" --yesno "¿Deseas habilitar el modo detallado para la instalación de controladores?" 8 58 && echo "" || echo "silent")
     pct exec "$CONTAINER_ID" -- bash -c "
-    apt-get update && apt-get install -y vainfo intel-media-va-driver-non-free intel-gpu-tools
-    adduser root video
-    adduser root render
+    silent() { \"\$@\" >/dev/null 2>&1; } && $VERBOSE_OPTION apt-get update && $VERBOSE_OPTION apt-get install -y va-driver-all ocl-icd-libopencl1 intel-opencl-icd vainfo intel-gpu-tools && chgrp video /dev/dri && chmod 755 /dev/dri && $VERBOSE_OPTION adduser root video && $VERBOSE_OPTION adduser root render
     "
     msg_ok "Controladores de iGPU instalados dentro del contenedor."
 }
