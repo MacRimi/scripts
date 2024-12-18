@@ -104,7 +104,8 @@ deb http://security.debian.org/debian-security $(lsb_release -sc)-security main 
         msg_ok "Repositorios non-free-firmware ya configurados."
     fi
 
-    apt-get update &>/dev/null
+    apt-get update
+    # apt-get update &>/dev/null
     msg_ok "Repositorios verificados y actualizados."
 }
 
