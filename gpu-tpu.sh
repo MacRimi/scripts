@@ -109,26 +109,28 @@ deb http://security.debian.org/debian-security $(lsb_release -sc)-security main 
     msg_ok "Repositorios verificados y actualizados."
 }
 
+
 # Configurar Coral TPU en el contenedor
 configure_lxc_for_coral() {
     ensure_privileged_container
     CONFIG_FILE="/etc/pve/lxc/${CONTAINER_ID}.conf"
 
     # Verificar y agregar configuraciones solo si no existen
-    if ! grep -q "c 189:* rwm" "$CONFIG_FILE"; then
+    if ! grep -Pq "^lxc.cgroup2.devices.allow: c 189:\* rwm # Coral USB$" "$CONFIG_FILE"; then
         echo "lxc.cgroup2.devices.allow: c 189:* rwm # Coral USB" >> "$CONFIG_FILE"
+    fi
+
+    if ! grep -Pq "^lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir$" "$CONFIG_FILE"; then
         echo "lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir" >> "$CONFIG_FILE"
     fi
 
-    if ! grep -q "c 29:0 rwm # Coral M.2" "$CONFIG_FILE"; then
-    #    echo "lxc.cgroup2.devices.allow: c 29:0 rwm # Coral M.2" >> "$CONFIG_FILE"
+    if ! grep -Pq "^lxc.mount.entry: /dev/apex_0 dev/apex_0 none bind,optional,create=file$" "$CONFIG_FILE"; then
         echo "lxc.mount.entry: /dev/apex_0 dev/apex_0 none bind,optional,create=file" >> "$CONFIG_FILE"
-    else
-        msg_info "Permisos para Coral M.2 ya configurados."
     fi
 
     msg_ok "Configuración de Coral TPU (USB y M.2) añadida al contenedor $CONTAINER_ID."
 }
+
 
 # Configurar iGPU en el contenedor
 configure_lxc_for_igpu() {
@@ -157,6 +159,7 @@ configure_lxc_for_igpu() {
 
     msg_ok "Configuración de iGPU añadida al contenedor $CONTAINER_ID."
 }
+
 
 # Instalar controladores iGPU en el contenedor
 install_igpu_in_container() {
