@@ -37,6 +37,16 @@ validate_pve_version() {
     msg_ok "Versión de Proxmox compatible."
 }
 
+# Función para solicitar o realizar reinicio
+restart_prompt() {
+    if (whiptail --title "Reinicio requerido" --yesno "La instalación requiere un reinicio del servidor para que los cambios sean efectivos. ¿Deseas reiniciar ahora?" 8 58); then
+        msg_info "Reiniciando el servidor..."
+        reboot
+    else
+        msg_info "No se realizó el reinicio. Por favor, reinicia manualmente más tarde para aplicar los cambios."
+    fi
+}
+
 # Selección del contenedor LXC
 select_container() {
     CONTAINERS=$(pct list | awk 'NR>1 {print $1, $3}' | xargs -n2)
@@ -267,6 +277,7 @@ main_menu() {
         1)
             configure_lxc_for_igpu
             install_igpu_in_container
+            pct restart "$CONTAINER_ID"
             ;;
         2)
             if (whiptail --title "Instalación Coral" --yesno "¿Deseas forzar la instalación de Coral en el host?" 8 58); then
@@ -279,6 +290,7 @@ main_menu() {
             install_coral_in_container
             configure_lxc_for_igpu
             install_igpu_in_container
+            restart_prompt # Solicitar reinicio del servidor
             ;;
         *)
             msg_error "Opción no válida. Saliendo."
